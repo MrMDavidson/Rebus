@@ -94,6 +94,7 @@ CREATE TABLE [dbo].[{0}] (
 	[id] [uniqueidentifier] NOT NULL,
 	[revision] [int] NOT NULL,
 	[data] [nvarchar](max) NOT NULL,
+    [LockedAt] DateTime NULL,
     CONSTRAINT [PK_{0}] PRIMARY KEY CLUSTERED 
     (
 	    [id] ASC
@@ -155,10 +156,15 @@ ALTER TABLE [dbo].[{0}] CHECK CONSTRAINT [FK_{1}_id]
         }
 
         /// <summary>
+        /// Indicates if this storage mechanism supports locking. If it does then <see cref="ISagaStorage.Find"/> must indicate that saga was successfully locked via <seealso cref="SagaStorageFindResult.Locked"/>. If it does not the then the message will be deferred
+        /// </summary>
+        public bool SupportsLocking { get { return true; } }
+
+        /// <summary>
         /// Queries the saga index for an instance with the given <paramref name="sagaDataType"/> with a
         /// a property named <paramref name="propertyName"/> and the value <paramref name="propertyValue"/>
         /// </summary>
-        public async Task<ISagaData> Find(Type sagaDataType, string propertyName, object propertyValue)
+        public async Task<SagaStorageFindResult> Find(Type sagaDataType, string propertyName, object propertyValue)
         {
             if (sagaDataType == null) throw new ArgumentNullException("sagaDataType");
             if (propertyName == null) throw new ArgumentNullException("propertyName");
@@ -174,12 +180,45 @@ ALTER TABLE [dbo].[{0}] CHECK CONSTRAINT [FK_{1}_id]
                     }
                     else
                     {
+//                        command.CommandText = string.Format(@"
+//SELECT TOP 1 [saga].[data] as 'data' FROM [{0}] [saga] 
+//    JOIN [{1}] [index] ON [saga].[id] = [index].[saga_id] 
+//WHERE [index].[saga_type] = @saga_type
+//    AND [index].[key] = @key 
+//    AND [index].[value] = @value", _dataTableName, _indexTableName);
                         command.CommandText = string.Format(@"
-SELECT TOP 1 [saga].[data] as 'data' FROM [{0}] [saga] 
-    JOIN [{1}] [index] ON [saga].[id] = [index].[saga_id] 
-WHERE [index].[saga_type] = @saga_type
-    AND [index].[key] = @key 
-    AND [index].[value] = @value", _dataTableName, _indexTableName);
+UPDATE  S
+SET     S.LockedAt = GETDATE()
+FROM    [{0}] S WITH (ROWLOCK, READPAST)
+JOIN    [{1}] I
+ON      I.saga_type = @saga_type
+AND     I.Key = @Key
+AND     I.Value = @Value
+AND     S.LockedAt IS NULL
+OUPUT   1 AS LockAcquired,
+        1 AS Exists,
+        inserted.Data AS Data
+FROM    [{0}] S
+JOIN    [{1}] I
+ON      I.saga_type = @saga_type
+AND     I.Key = @Key
+AND     I.Value = @Value
+UNION
+ALL
+SELECT  0 AS LockAcquired,
+        1 AS Exists,
+        S.Data AS Data
+FROM    [{0}] S
+JOIN    [{1}] I
+ON      I.saga_type = @saga_type
+AND     I.Key = @Key
+AND     I.Value = @Value
+UNION
+ALL
+SELECT  0 AS LockAcquired,
+        0 AS Exists,
+        NULL as Data
+", _dataTableName, _indexTableName);
 
                         var sagaTypeName = GetSagaTypeName(sagaDataType);
 
@@ -191,19 +230,40 @@ WHERE [index].[saga_type] = @saga_type
 
                     command.Parameters.Add("value", SqlDbType.NVarChar, correlationPropertyValue.Length).Value = correlationPropertyValue;
 
-                    var dbValue = await command.ExecuteScalarAsync();
-                    var value = (string)dbValue;
-                    if (value == null) return null;
+                    using (IDataReader reader = command.ExecuteReader())
+                    {
+                        if (reader.Read() == false)
+                        {
+                            return new SagaStorageFindResult()
+                            {
+                                Exists = false
+                            };
+                        }
 
-                    try
-                    {
-                        return (ISagaData)JsonConvert.DeserializeObject(value, Settings);
-                    }
-                    catch (Exception exception)
-                    {
-                        throw new ApplicationException(
-                            string.Format("An error occurred while attempting to deserialize '{0}' into a {1}",
-                                value, sagaDataType), exception);
+                        var locked = (bool)reader["LockAcquired"];
+                        var exists = (bool)reader["Exists"];
+                        var value = (string)reader["Data"];
+
+                        try
+                        {
+                            var sagaFindResult = new SagaStorageFindResult()
+                            {
+                                Locked = locked,
+                                Exists = exists
+                            };
+                            if (string.IsNullOrWhiteSpace(value) == false)
+                            {
+                                sagaFindResult.Data = (ISagaData)JsonConvert.DeserializeObject(value, Settings);
+                            }
+
+                            return sagaFindResult;
+                        }
+                        catch (Exception exception)
+                        {
+                            throw new ApplicationException(
+                                string.Format("An error occurred while attempting to deserialize '{0}' into a {1}",
+                                    value, sagaDataType), exception);
+                        }
                     }
                 }
             }

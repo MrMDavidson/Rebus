@@ -35,13 +35,13 @@ namespace Rebus.Tests.Contracts.Sagas
 
             await _sagaStorage.Insert(new SomeSagaData { Id = id }, _noCorrelationProperties);
 
-            var loadedData1 = await _sagaStorage.Find(typeof(SomeSagaData), "Id", id);
+            var result1 = await _sagaStorage.Find(typeof(SomeSagaData), "Id", id);
 
-            var loadedData2 = await _sagaStorage.Find(typeof(SomeSagaData), "Id", id);
+            var result2 = await _sagaStorage.Find(typeof(SomeSagaData), "Id", id);
 
-            await _sagaStorage.Update(loadedData1, _noCorrelationProperties);
+            await _sagaStorage.Update(result1.Data, _noCorrelationProperties);
 
-            Assert.Throws<ConcurrencyException>(async () => await _sagaStorage.Update(loadedData2, _noCorrelationProperties));
+            Assert.Throws<ConcurrencyException>(async () => await _sagaStorage.Update(result2.Data, _noCorrelationProperties));
         }
 
         class SomeSagaData : ISagaData

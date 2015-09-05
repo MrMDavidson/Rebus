@@ -29,7 +29,12 @@ namespace Rebus.MongoDb.Sagas
             _collectionNameResolver = collectionNameResolver ?? (type => type.Name);
         }
 
-        public async Task<ISagaData> Find(Type sagaDataType, string propertyName, object propertyValue)
+        /// <summary>
+        /// Indicates if this storage mechanism supports locking. If it does then <see cref="ISagaStorage.Find"/> must indicate that saga was successfully locked via <seealso cref="SagaStorageFindResult.Locked"/>. If it does not the then the message will be deferred
+        /// </summary>
+        public bool SupportsLocking { get { return false; } }
+
+        public async Task<SagaStorageFindResult> Find(Type sagaDataType, string propertyName, object propertyValue)
         {
             var collection = GetCollection(sagaDataType);
 
@@ -38,13 +43,17 @@ namespace Rebus.MongoDb.Sagas
             var criteria = new BsonDocument(propertyName, BsonValue.Create(propertyValue));
 
             var result = await collection.Find(criteria).FirstOrDefaultAsync().ConfigureAwait(false);
-            ISagaData sagaData = null;
+            SagaStorageFindResult sagaFindResult = null;
             if (result != null)
             {
-                sagaData = (ISagaData) BsonSerializer.Deserialize(result, sagaDataType);
+                sagaFindResult = new SagaStorageFindResult()
+                {
+                    Exists = true,
+                    Data = (ISagaData) BsonSerializer.Deserialize(result, sagaDataType)
+                };
             }
 
-            return sagaData;
+            return sagaFindResult;
         }
 
         public async Task Insert(ISagaData sagaData, IEnumerable<ISagaCorrelationProperty> correlationProperties)

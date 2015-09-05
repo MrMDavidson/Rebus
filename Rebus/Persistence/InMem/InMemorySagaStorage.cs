@@ -25,9 +25,14 @@ namespace Rebus.Persistence.InMem
         };
 
         /// <summary>
+        /// Indicates if this storage mechanism supports locking. If it does then <see cref="ISagaStorage.Find"/> must indicate that saga was successfully locked via <seealso cref="SagaStorageFindResult.Locked"/>. If it does not the then the message will be deferred
+        /// </summary>
+        public bool SupportsLocking { get { return false; } }
+
+        /// <summary>
         /// Looks up an existing saga data of the given type with a property of the specified name and the specified value
         /// </summary>
-        public async Task<ISagaData> Find(Type sagaDataType, string propertyName, object propertyValue)
+        public async Task<SagaStorageFindResult> Find(Type sagaDataType, string propertyName, object propertyValue)
         {
             lock (_lock)
             {
@@ -40,7 +45,13 @@ namespace Rebus.Persistence.InMem
                     var sagaValue = Reflect.Value(data, propertyName);
                     var valueFromSaga = (sagaValue ?? "").ToString();
 
-                    if (valueFromMessage.Equals(valueFromSaga)) return Clone(data);
+                    if (valueFromMessage.Equals(valueFromSaga) == true) {
+                        return new SagaStorageFindResult()
+                        {
+                            Exists = true,
+                            Data = Clone(data)
+                        };
+                    }
                 }
 
                 return null;

@@ -116,7 +116,12 @@ CREATE INDEX ON ""{0}"" (""saga_id"");
             }
         }
 
-        public async Task<ISagaData> Find(Type sagaDataType, string propertyName, object propertyValue)
+        /// <summary>
+        /// Indicates if this storage mechanism supports locking. If it does then <see cref="ISagaStorage.Find"/> must indicate that saga was successfully locked via <seealso cref="SagaStorageFindResult.Locked"/>. If it does not the then the message will be deferred
+        /// </summary>
+        public bool SupportsLocking { get { return false; } }
+
+        public async Task<SagaStorageFindResult> Find(Type sagaDataType, string propertyName, object propertyValue)
         {
             using (var connection = await _connectionHelper.GetConnection())
             {
@@ -151,7 +156,10 @@ SELECT s.data
 
                     try
                     {
-                        return (ISagaData) _objectSerializer.Deserialize(data);
+                        return new SagaStorageFindResult() {
+                            Exists = true,
+                            Data = (ISagaData) _objectSerializer.Deserialize(data)
+                        };
                     }
                     catch (Exception exception)
                     {

@@ -71,10 +71,11 @@ namespace Rebus.Tests.Contracts.Sagas
             await _sagaStorage.Insert(new TestSagaData { Id = sagaId, CorrelationId = "existing" }, 
                 CorrelationPropertiesFor<TestSagaData>(d => d.CorrelationId));
 
-            var data = await _sagaStorage.Find(typeof(TestSagaData), "CorrelationId", "existing");
+            var result = await _sagaStorage.Find(typeof(TestSagaData), "CorrelationId", "existing");
 
-            Assert.That(data, Is.Not.Null);
-            Assert.That(data.Id, Is.EqualTo(sagaId));
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.Data, Is.Not.Null);
+            Assert.That(result.Data.Id, Is.EqualTo(sagaId));
         }
 
         [Test]
@@ -85,9 +86,9 @@ namespace Rebus.Tests.Contracts.Sagas
             await _sagaStorage.Insert(new TestSagaData { Id = sagaId, CorrelationId = "existing" },
                 CorrelationPropertiesFor<TestSagaData>(d => d.CorrelationId));
 
-            var data = await _sagaStorage.Find(typeof(AnotherSagaData), "CorrelationId", "existing");
+            var result = await _sagaStorage.Find(typeof(AnotherSagaData), "CorrelationId", "existing");
 
-            Assert.That(data, Is.Null);
+            Assert.That(result, Is.Null);
         }
 
         [Test]
@@ -98,10 +99,11 @@ namespace Rebus.Tests.Contracts.Sagas
             await _sagaStorage.Insert(new TestSagaData { Id = sagaId, CorrelationId = "existing" },
                 CorrelationPropertiesFor<TestSagaData>(d => d.CorrelationId));
 
-            var data = await _sagaStorage.Find(typeof(TestSagaData), "Id", sagaId);
+            var result = await _sagaStorage.Find(typeof(TestSagaData), "Id", sagaId);
 
-            Assert.That(data, Is.Not.Null);
-            Assert.That(data.Id, Is.EqualTo(sagaId));
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.Data, Is.Not.Null);
+            Assert.That(result.Data.Id, Is.EqualTo(sagaId));
         }
 
         [Test]
@@ -115,9 +117,11 @@ namespace Rebus.Tests.Contracts.Sagas
                 Data = "yes, den kender jeg"
             }, _noCorrelationProperties);
 
-            var loadedSagaData = await _sagaStorage.Find(typeof(TestSagaData), "Id", sagaId);
+            var result = await _sagaStorage.Find(typeof(TestSagaData), "Id", sagaId);
 
-            Assert.That(loadedSagaData.Revision, Is.EqualTo(0));
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.Data, Is.Not.Null);
+            Assert.That(result.Data.Revision, Is.EqualTo(0));
         }
 
         [Test]
@@ -132,20 +136,20 @@ namespace Rebus.Tests.Contracts.Sagas
             await _sagaStorage.Insert(initialTransientInstance, _noCorrelationProperties);
             var loadedSagaData0 = await _sagaStorage.Find(typeof(TestSagaData), "Id", sagaId);
             
-            Assert.That(loadedSagaData0.Revision, Is.EqualTo(0));
+            Assert.That(loadedSagaData0.Data.Revision, Is.EqualTo(0));
             Assert.That(initialTransientInstance.Revision, Is.EqualTo(0));
 
-            await _sagaStorage.Update(loadedSagaData0, _noCorrelationProperties);
+            await _sagaStorage.Update(loadedSagaData0.Data, _noCorrelationProperties);
             var loadedSagaData1 = await _sagaStorage.Find(typeof(TestSagaData), "Id", sagaId);
             
-            Assert.That(loadedSagaData0.Revision, Is.EqualTo(1));
-            Assert.That(loadedSagaData1.Revision, Is.EqualTo(1));
+            Assert.That(loadedSagaData0.Data.Revision, Is.EqualTo(1));
+            Assert.That(loadedSagaData1.Data.Revision, Is.EqualTo(1));
 
-            await _sagaStorage.Update(loadedSagaData1, _noCorrelationProperties);
+            await _sagaStorage.Update(loadedSagaData1.Data, _noCorrelationProperties);
             var loadedSagaData2 = await _sagaStorage.Find(typeof(TestSagaData), "Id", sagaId);
             
-            Assert.That(loadedSagaData1.Revision, Is.EqualTo(2));
-            Assert.That(loadedSagaData2.Revision, Is.EqualTo(2));
+            Assert.That(loadedSagaData1.Data.Revision, Is.EqualTo(2));
+            Assert.That(loadedSagaData2.Data.Revision, Is.EqualTo(2));
         }
 
         [Test]
@@ -159,11 +163,11 @@ namespace Rebus.Tests.Contracts.Sagas
                 Data = "yes, den kender jeg"
             }, _noCorrelationProperties);
 
-            var loadedSagaData = await _sagaStorage.Find(typeof(TestSagaData), "Id", sagaId);
+            var findResult = await _sagaStorage.Find(typeof(TestSagaData), "Id", sagaId);
 
-            Assert.That(loadedSagaData, Is.Not.Null);
+            Assert.That(findResult, Is.Not.Null);
 
-            await _sagaStorage.Delete(loadedSagaData);
+            await _sagaStorage.Delete(findResult.Data);
 
             var loadedSagaDataAfterDelete = await _sagaStorage.Find(typeof(TestSagaData), "Id", sagaId);
 
@@ -209,12 +213,12 @@ namespace Rebus.Tests.Contracts.Sagas
             var dataByInt = await Find(intCorrelationValue, d => d.CorrelateByInt);
             var dataByGuid = await Find(guidCorrelationValue, d => d.CorrelateByGuid);
 
-            Assert.That(dataByString.Id, Is.EqualTo(id));
-            Assert.That(dataByInt.Id, Is.EqualTo(id));
-            Assert.That(dataByGuid.Id, Is.EqualTo(id));
+            Assert.That(dataByString.Data.Id, Is.EqualTo(id));
+            Assert.That(dataByInt.Data.Id, Is.EqualTo(id));
+            Assert.That(dataByGuid.Data.Id, Is.EqualTo(id));
         }
 
-        async Task<ISagaData> Find(object value, Expression<Func<SagaDataWithVariousCorrelationProperties, object>> expression)
+        async Task<SagaStorageFindResult> Find(object value, Expression<Func<SagaDataWithVariousCorrelationProperties, object>> expression)
         {
             return await _sagaStorage.Find(typeof (SagaDataWithVariousCorrelationProperties), Reflect.Path(expression), value);
         }

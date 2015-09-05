@@ -117,7 +117,12 @@ namespace Rebus.Tests.Integration
                 _persistentSagaData = persistentSagaData;
             }
 
-            public async Task<ISagaData> Find(Type sagaDataType, string propertyName, object propertyValue)
+            /// <summary>
+            /// Indicates if this storage mechanism supports locking. If it does then <see cref="Find"/> must indicate that saga was successfully locked via <seealso cref="SagaStorageFindResult.Locked"/>. If it does not the then the message will be deferred
+            /// </summary>
+            public bool SupportsLocking { get { return _innerSagaStorage.SupportsLocking; } }
+
+            public async Task<SagaStorageFindResult> Find(Type sagaDataType, string propertyName, object propertyValue)
             {
                 return await _innerSagaStorage.Find(sagaDataType, propertyName, propertyValue);
             }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Rebus.Bus;
+using Rebus.Exceptions;
 using Rebus.Logging;
 using Rebus.Messages;
 using Rebus.Sagas;
@@ -67,9 +68,13 @@ Afterwards, all the created/loaded saga data is updated appropriately.")]
                 foreach (var correlationProperty in correlationPropertiesRelevantForMessage)
                 {
                     var valueFromMessage = correlationProperty.ValueFromMessage(body);
-                    var sagaData = await _sagaStorage.Find(sagaInvoker.Saga.GetSagaDataType(), correlationProperty.PropertyName, valueFromMessage);
+                    SagaStorageFindResult sagaResult = await _sagaStorage.Find(sagaInvoker.Saga.GetSagaDataType(), correlationProperty.PropertyName, valueFromMessage);
+                    if ((sagaResult == null) || (sagaResult.Exists == false)) continue;
+                    if ((_sagaStorage.SupportsLocking == true) && (sagaResult.Locked == false)) {
+                        throw new ConcurrencyException("Could not lock saga data. It is currently being used");
+                    }
 
-                    if (sagaData == null) continue;
+                    var sagaData = sagaResult.Data;
 
                     sagaInvoker.SetSagaData(sagaData);
                     foundExistingSagaData = true;
