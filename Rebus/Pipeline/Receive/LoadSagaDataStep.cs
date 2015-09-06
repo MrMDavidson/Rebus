@@ -7,6 +7,7 @@ using Rebus.Exceptions;
 using Rebus.Logging;
 using Rebus.Messages;
 using Rebus.Sagas;
+using Rebus.Transport;
 
 namespace Rebus.Pipeline.Receive
 {
@@ -33,8 +34,7 @@ Afterwards, all the created/loaded saga data is updated appropriately.")]
         /// <summary>
         /// Constructs the step with the given saga storage
         /// </summary>
-        public LoadSagaDataStep(ISagaStorage sagaStorage)
-        {
+        public LoadSagaDataStep(ISagaStorage sagaStorage) {
             _sagaStorage = sagaStorage;
         }
 
@@ -71,8 +71,28 @@ Afterwards, all the created/loaded saga data is updated appropriately.")]
                     SagaStorageFindResult sagaResult = await _sagaStorage.Find(sagaInvoker.Saga.GetSagaDataType(), correlationProperty.PropertyName, valueFromMessage);
                     if ((sagaResult == null) || (sagaResult.Exists == false)) continue;
                     if ((_sagaStorage.SupportsLocking == true) && (sagaResult.Locked == false)) {
-                        throw new ConcurrencyException("Could not lock saga data. It is currently being used");
+
+                        // TODO: Provide configuration for both the number of quick retries and the delay between them
+                        for (int i = 0; i < 5; i++)
+                        {
+                            await Task.Delay(TimeSpan.FromMilliseconds(i * 100));
+
+                            sagaResult = await _sagaStorage.Find(sagaInvoker.Saga.GetSagaDataType(), correlationProperty.PropertyName, valueFromMessage);
+                            if ((sagaResult == null) || (sagaResult.Exists == false)) break;
+                            if ((_sagaStorage.SupportsLocking == false) || (sagaResult.Locked == true))
+                            {
+                                break;
+                            }
+                        }
+
+                        if ((_sagaStorage.SupportsLocking == true) && (sagaResult.Locked == false))
+                        {
+                            // TODO: Instead defer the message
+                            throw new ConcurrencyException("Could not lock saga data. It is currently being used");
+                        }
+
                     }
+                    if ((sagaResult == null) || (sagaResult.Exists == false)) continue;
 
                     var sagaData = sagaResult.Data;
 

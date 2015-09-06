@@ -176,7 +176,23 @@ ALTER TABLE [dbo].[{0}] CHECK CONSTRAINT [FK_{1}_id]
                 {
                     if (propertyName.Equals(_idPropertyName, StringComparison.InvariantCultureIgnoreCase))
                     {
-                        command.CommandText = string.Format(@"SELECT TOP 1 [data] FROM [{0}] WHERE [id] = @value", _dataTableName);
+                        //command.CommandText = string.Format(@"SELECT TOP 1 [data] FROM [{0}] WHERE [id] = @value", _dataTableName);
+                        command.CommandText = string.Format(@"
+UPDATE	[{0}] WITH (READPAST)
+SET		LockedAt = GETDATE()
+OUTPUT	CAST(1 AS BIT) AS LockAcquired,
+		CAST(1 AS BIT) SagaExists,
+		inserted.Data as Data
+WHERE	Id = @Value
+AND		LockedAt IS NULL
+;
+
+SELECT	CAST(0 AS BIT) AS LockAcquired,
+		CAST(1 AS BIT) AS SagaExists,
+		S.Data as Data
+FROM	[{0}] S WITH (READUNCOMMITTED)
+WHERE	Id = @Value
+", _dataTableName);
                     }
                     else
                     {
@@ -189,36 +205,35 @@ ALTER TABLE [dbo].[{0}] CHECK CONSTRAINT [FK_{1}_id]
                         command.CommandText = string.Format(@"
 UPDATE  S
 SET     S.LockedAt = GETDATE()
+OUPUT   1 AS LockAcquired,
+        1 AS SagaExists,
+        inserted.Data AS Data
 FROM    [{0}] S WITH (ROWLOCK, READPAST)
 JOIN    [{1}] I
-ON      I.saga_type = @saga_type
+ON      S.id = I.saga_id
+AND     I.saga_type = @saga_type
 AND     I.Key = @Key
 AND     I.Value = @Value
 AND     S.LockedAt IS NULL
-OUPUT   1 AS LockAcquired,
-        1 AS Exists,
-        inserted.Data AS Data
-FROM    [{0}] S
-JOIN    [{1}] I
-ON      I.saga_type = @saga_type
-AND     I.Key = @Key
-AND     I.Value = @Value
 UNION
 ALL
 SELECT  0 AS LockAcquired,
-        1 AS Exists,
+        1 AS SagaExists,
         S.Data AS Data
 FROM    [{0}] S
 JOIN    [{1}] I
-ON      I.saga_type = @saga_type
+ON      S.Id = I.Saga_id 
+AND     I.saga_type = @saga_type
 AND     I.Key = @Key
 AND     I.Value = @Value
 UNION
 ALL
 SELECT  0 AS LockAcquired,
-        0 AS Exists,
+        0 AS SagaExists,
         NULL as Data
 ", _dataTableName, _indexTableName);
+
+                        _log.Warn("Executing {0}", command.CommandText);
 
                         var sagaTypeName = GetSagaTypeName(sagaDataType);
 
@@ -230,40 +245,98 @@ SELECT  0 AS LockAcquired,
 
                     command.Parameters.Add("value", SqlDbType.NVarChar, correlationPropertyValue.Length).Value = correlationPropertyValue;
 
-                    using (IDataReader reader = command.ExecuteReader())
+
+                    Console.WriteLine("Executed {0}", command.CommandText);
+                    using (var reader = await command.ExecuteReaderAsync())
                     {
-                        if (reader.Read() == false)
+                        // We should get back multiple result sets. We will exit on the first one with rows
+                        // 1. Lock acquired for the saga and it exists
+                        // 2. Saga exists but someone else has a lock on it
+                        do
                         {
-                            return new SagaStorageFindResult()
+                            if ((await reader.ReadAsync()) == false)
                             {
-                                Exists = false
-                            };
-                        }
+                                Console.WriteLine("Recordset has no values. Skipping");
 
-                        var locked = (bool)reader["LockAcquired"];
-                        var exists = (bool)reader["Exists"];
-                        var value = (string)reader["Data"];
-
-                        try
-                        {
-                            var sagaFindResult = new SagaStorageFindResult()
-                            {
-                                Locked = locked,
-                                Exists = exists
-                            };
-                            if (string.IsNullOrWhiteSpace(value) == false)
-                            {
-                                sagaFindResult.Data = (ISagaData)JsonConvert.DeserializeObject(value, Settings);
+                                continue;
                             }
 
-                            return sagaFindResult;
-                        }
-                        catch (Exception exception)
+                            for (int i = 0; i < reader.FieldCount; i++)
+                            {
+                                Console.WriteLine("Field {0}: {1} = {2} ({3})", i, reader.GetName(i), reader[i], reader.GetDataTypeName(i));
+                            }
+
+
+                            var locked = (bool)reader["LockAcquired"];
+                            var exists = (bool)reader["SagaExists"];
+                            var value = (string)reader["Data"];
+
+                            try
+                            {
+                                var sagaFindResult = new SagaStorageFindResult()
+                                {
+                                    Locked = locked,
+                                    Exists = exists
+                                };
+                                if (string.IsNullOrWhiteSpace(value) == false)
+                                {
+                                    sagaFindResult.Data = (ISagaData)JsonConvert.DeserializeObject(value, Settings);
+                                }
+
+                                return sagaFindResult;
+                            }
+                            catch (Exception exception)
+                            {
+                                throw new ApplicationException(
+                                    string.Format("An error occurred while attempting to deserialize '{0}' into a {1}",
+                                        value, sagaDataType), exception);
+                            }
+                        } while ((await reader.NextResultAsync()) == true);
+
+                        return new SagaStorageFindResult()
                         {
-                            throw new ApplicationException(
-                                string.Format("An error occurred while attempting to deserialize '{0}' into a {1}",
-                                    value, sagaDataType), exception);
-                        }
+                            Exists = false
+                        };
+
+                        //if (await reader.ReadAsync() == false)
+                        //{
+                        //    return new SagaStorageFindResult()
+                        //    {
+                        //        Exists = false
+                        //    };
+                        //}
+
+                        //Console.WriteLine("Executed {0}", command.CommandText);
+
+                        //for (int i = 0; i < reader.FieldCount; i++)
+                        //{
+                        //    Console.WriteLine("Field {0}: {1} = {2}", i, reader.GetName(i), reader[i]);
+                        //}
+
+                        //var locked = (bool)reader["LockAcquired"];
+                        //var exists = (bool)reader["Exists"];
+                        //var value = (string)reader["Data"];
+
+                        //try
+                        //{
+                        //    var sagaFindResult = new SagaStorageFindResult()
+                        //    {
+                        //        Locked = locked,
+                        //        Exists = exists
+                        //    };
+                        //    if (string.IsNullOrWhiteSpace(value) == false)
+                        //    {
+                        //        sagaFindResult.Data = (ISagaData)JsonConvert.DeserializeObject(value, Settings);
+                        //    }
+
+                        //    return sagaFindResult;
+                        //}
+                        //catch (Exception exception)
+                        //{
+                        //    throw new ApplicationException(
+                        //        string.Format("An error occurred while attempting to deserialize '{0}' into a {1}",
+                        //            value, sagaDataType), exception);
+                        //}
                     }
                 }
             }
