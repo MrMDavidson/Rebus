@@ -25,6 +25,10 @@ namespace Rebus.Sagas
 
         internal bool WasMarkedAsComplete { get; set; }
 
+        internal bool WasMarkedAsUnchanged { get; set; }
+
+        internal bool HoldsNewSagaDataInstance { get; set; }
+
         /// <summary>
         /// Marks the current saga instance as completed, which means that it is either a) deleted from persistent storage in case
         /// it has been made persistent, or b) thrown out the window if it was never persisted in the first place.
@@ -32,6 +36,23 @@ namespace Rebus.Sagas
         protected virtual void MarkAsComplete()
         {
             WasMarkedAsComplete = true;
+        }
+
+        /// <summary>
+        /// Marks the current saga instance as unchanged, causing any changes made to it to be ignored. Its revision will NOT be
+        /// incremented
+        /// </summary>
+        protected virtual void MarkAsUnchanged()
+        {
+            WasMarkedAsUnchanged = true;
+        }
+
+        /// <summary>
+        /// Gets whether the saga data instance is new
+        /// </summary>
+        protected bool IsNew
+        {
+            get { return HoldsNewSagaDataInstance; }
         }
     }
 
@@ -107,10 +128,14 @@ namespace Rebus.Sagas
 
         internal override ISagaData CreateNewSagaData()
         {
-            return new TSagaData
+            var newSagaData = new TSagaData
             {
                 Id = Guid.NewGuid()
             };
+
+            HoldsNewSagaDataInstance = true;
+
+            return newSagaData;
         }
     }
 }

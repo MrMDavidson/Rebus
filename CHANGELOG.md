@@ -640,6 +640,92 @@
 
 * Made disposal of resources more consistent (still not entirely consistent though, depends on importance)
 
+## 0.98.4
+
+* Added `IsNew` property to `Saga` base class allowing saga handlers to easily determine whether the instance is new
+
+## 0.98.5
+
+* Added one-way client mode for Amazon SQS transport
+
+## 0.98.6
+
+* Added "per Rebus message" lifestyle to Windsor container configuration extensions
+
+## 0.98.7
+
+* Added simple 2nd level retries mechanism
+* Added ability to forward the current transport message (optionally supplying some extra headers)
+* Added configurable idle time backoff strategy
+
+## 0.98.8
+
+* Fixed bug that could result in double-resolving handler instances with Ninject, Castle Windsor, and Unity because of a lazy-evaluated `IEnumerable`
+
+## 0.98.9
+
+* Fixed MSMQ remote queue path formatting
+
+## 0.98.10
+
+* Extended built-in handler activator with `Register` overloads that allow for registering handler factory functions that accept `IMessageContext` and `(IBus, IMessageContext)` as arguments
+
+## 0.98.11
+
+* Added `IMessageContext.AbortDispatch()` which aborts dispatch of the current message to any handlers following the one currently being executed.
+
+## 0.98.12
+
+* Added ability to mark saga data as unchanged by calling `MarkAsUnchanged()` on the saga handler.
+
+## 0.99.0
+
+* Inject loggers. Will remove static logging things later.
+* Allow for enabling partitioning with Azure Service Bus transports
+* Changed Azure Service Bus transports to use streams as the message body to avoid silly XML-wrapping - thanks [meyce]
+* Updated WindowsAzure.ServiceBus dependency to 3.0.4
+* Updated WindowsAzure.Storage dependency to 6.0.0
+
+## 0.99.1
+
+* Added Serilog log event enricher + configuration extension for including Rebus' correlation ID in log events
+* Added custom NLog layout renderer that outputs the correlation ID of the message currently being handled in the `${rebus-correlation-id}` variable
+
+# 0.99.2
+
+* Fixed NLog nuget dependency
+
+# 0.99.3
+
+* Access to more useful information on `Failed<TMessage>`
+
+# 0.99.4
+
+* Added no-inlining jit directive to the Windsor package's `AutoRegisterHandlersFromThisAssembly` method because it looks like handlers are sometimes not picked up as they should
+
+# 0.99.5
+
+* Replaced Windsor's assembly-scanning with manual scan
+
+# 0.99.6
+
+* Set correlation ID, content type, and label properties on brokered messages with Azure Service Bus transport
+
+# 0.99.7
+
+* Limit length of header values used when using Azure Service Bus transport
+
+# 0.99.8
+
+* Fixed it so that delivery will not be retried indefinitely on commit exceptions
+
+# 0.99.9
+
+* Changed RabbitMQ routing to use two exchanges: one for direct addressing, and one for pub/sub messaging. This way, "clean" RabbitMQ topics can be subscribed to and then used when publishing, allowing for subscribing to topics using wildcards.
+
+# 0.99.10
+
+* Fixed nuspec on StructureMap package, made SimpleInjector package dependency version criteria more tolerant, and updated the Unity dependency to v 4
 
 [AndreaCuneo]: https://github.com/AndreaCuneo
 [arneeiri]: https://github.com/arneeiri
@@ -657,6 +743,7 @@
 [maeserichar]: https://github.com/maeserichar
 [maxx1337]: https://github.com/maxx1337
 [mclausen]: https://github.com/mclausen
+[meyce]: https://github.com/Meyce
 [mgayeski]: https://github.com/mgayeski
 [mgibas]: https://github.com/mgibas
 [MrMDavidson]: https://github.com/MrMDavidson

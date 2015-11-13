@@ -74,17 +74,17 @@ namespace Rebus.Config
         /// <summary>
         /// Registers the given factory function as a resolver of the given primary implementation of the <typeparamref name="TService"/> service
         /// </summary>
-        public void Register<TService>(Func<IResolutionContext, TService> resolverMethod)
+        public void Register<TService>(Func<IResolutionContext, TService> resolverMethod, string description = null)
         {
-            _injectionist.Register(resolverMethod);
+            _injectionist.Register(resolverMethod, description);
         }
 
         /// <summary>
         /// Registers the given factory function as a resolve of the given decorator of the <typeparamref name="TService"/> service
         /// </summary>
-        public void Decorate<TService>(Func<IResolutionContext, TService> resolverMethod)
+        public void Decorate<TService>(Func<IResolutionContext, TService> resolverMethod, string description = null)
         {
-            _injectionist.Decorate(resolverMethod);
+            _injectionist.Decorate(resolverMethod, description);
         }
 
         /// <summary>
@@ -93,8 +93,6 @@ namespace Rebus.Config
         [MethodImpl(MethodImplOptions.NoInlining)]
         public OptionsConfigurer LogPipeline(bool verbose = false)
         {
-            var logger = RebusLoggerFactory.Current.GetCurrentClassLogger();
-
             // when the pipeline is resolved, we hook ourselves in and log it!
             _injectionist.ResolveRequested += serviceType =>
             {
@@ -103,6 +101,7 @@ namespace Rebus.Config
                 _injectionist.Decorate(c =>
                 {
                     var pipeline = c.Get<IPipeline>();
+                    var logger = c.Get<IRebusLoggerFactory>().GetLogger<OptionsConfigurer>();
 
                     var receivePipeline = pipeline.ReceivePipeline();
                     var sendPipeline = pipeline.SendPipeline();
@@ -127,7 +126,7 @@ Receive pipeline:
             return this;
         }
 
-        string Format(IEnumerable<IStep> pipeline, bool verbose)
+        static string Format(IEnumerable<IStep> pipeline, bool verbose)
         {
             return string.Join(Environment.NewLine,
                 pipeline.Select((step, i) =>
@@ -151,7 +150,7 @@ Receive pipeline:
                 }));
         }
 
-        string GetDocsOrNull(IStep step)
+        static string GetDocsOrNull(IStep step)
         {
             var docsAttribute = step.GetType()
                 .GetCustomAttributes()

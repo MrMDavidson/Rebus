@@ -25,12 +25,6 @@ namespace Rebus.Bus
     /// </summary>
     public partial class RebusBus : IBus
     {
-        static ILog _log;
-
-        static RebusBus()
-        {
-            RebusLoggerFactory.Changed += f => _log = f.GetCurrentClassLogger();
-        }
 
         static int _busIdCounter;
 
@@ -45,11 +39,12 @@ namespace Rebus.Bus
         readonly IPipelineInvoker _pipelineInvoker;
         readonly ISubscriptionStorage _subscriptionStorage;
         readonly Options _options;
+        readonly ILog _log;
 
         /// <summary>
         /// Constructs the bus.
         /// </summary>
-        public RebusBus(IWorkerFactory workerFactory, IRouter router, ITransport transport, IPipeline pipeline, IPipelineInvoker pipelineInvoker, ISubscriptionStorage subscriptionStorage, Options options)
+        public RebusBus(IWorkerFactory workerFactory, IRouter router, ITransport transport, IPipeline pipeline, IPipelineInvoker pipelineInvoker, ISubscriptionStorage subscriptionStorage, Options options, IRebusLoggerFactory rebusLoggerFactory)
         {
             _workerFactory = workerFactory;
             _router = router;
@@ -58,6 +53,7 @@ namespace Rebus.Bus
             _pipelineInvoker = pipelineInvoker;
             _subscriptionStorage = subscriptionStorage;
             _options = options;
+            _log = rebusLoggerFactory.GetCurrentClassLogger();
         }
 
         /// <summary>
@@ -364,6 +360,18 @@ namespace Rebus.Bus
             await _pipelineInvoker.Invoke(context, _pipeline.SendPipeline());
         }
 
+        async Task SendTransportMessage(string destinationAddress, TransportMessage transportMessage)
+        {
+            var transactionContext = AmbientTransactionContext.Current;
+
+            if (transactionContext == null)
+            {
+                throw new InvalidOperationException(string.Format("Attempted to send {0} to {1} outside of a transaction context!", transportMessage.GetMessageLabel(), destinationAddress));
+            }
+
+            await _transport.Send(destinationAddress, transportMessage, transactionContext);
+        }
+
         bool _disposing;
 
         /// <summary>
@@ -395,7 +403,7 @@ namespace Rebus.Bus
             }
         }
 
-        static void StopWorker(IWorker worker)
+        void StopWorker(IWorker worker)
         {
             try
             {

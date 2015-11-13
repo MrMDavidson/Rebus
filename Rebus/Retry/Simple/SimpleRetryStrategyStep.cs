@@ -18,26 +18,27 @@ namespace Rebus.Retry.Simple
 If the maximum number of delivery attempts is reached, the message is moved to the error queue.")]
     public class SimpleRetryStrategyStep : IRetryStrategyStep
     {
+        /// <summary>
+        /// Key of a step context item that indicates that the message must be wrapped in a <see cref="Failed{TMessage}"/> after being deserialized
+        /// </summary>
+        public const string DispatchAsFailedMessageKey = "dispatch-as-failed-message";
+        
         static readonly TimeSpan MoveToErrorQueueFailedPause = TimeSpan.FromSeconds(5);
-        static ILog _log;
-
-        static SimpleRetryStrategyStep()
-        {
-            RebusLoggerFactory.Changed += f => _log = f.GetCurrentClassLogger();
-        }
 
         readonly SimpleRetryStrategySettings _simpleRetryStrategySettings;
         readonly IErrorTracker _errorTracker;
         readonly ITransport _transport;
+        readonly ILog _log;
 
         /// <summary>
         /// Constructs the step, using the given transport and settings
         /// </summary>
-        public SimpleRetryStrategyStep(ITransport transport, SimpleRetryStrategySettings simpleRetryStrategySettings, IErrorTracker errorTracker)
+        public SimpleRetryStrategyStep(ITransport transport, SimpleRetryStrategySettings simpleRetryStrategySettings, IErrorTracker errorTracker, IRebusLoggerFactory rebusLoggerFactory)
         {
             _transport = transport;
             _simpleRetryStrategySettings = simpleRetryStrategySettings;
             _errorTracker = errorTracker;
+            _log = rebusLoggerFactory.GetCurrentClassLogger();
         }
 
         /// <summary>
@@ -58,26 +59,58 @@ If the maximum number of delivery attempts is reached, the message is moved to t
                                                       " between delivery attempts, and other stuff would also be much harder to" +
                                                       " do - therefore, it is a requirement that messages be supplied with an ID.",
                         Headers.MessageId),
-                        shortErrorDescription: "Received message with empty or absent 'rbs2-msg-id' header");
+                        shortErrorDescription: string.Format("Received message with empty or absent '{0}' header", Headers.MessageId));
 
                 return;
             }
 
             if (_errorTracker.HasFailedTooManyTimes(messageId))
             {
-                await MoveMessageToErrorQueue(messageId, transportMessage, transactionContext, GetErrorDescriptionFor(messageId), GetErrorDescriptionFor(messageId, brief: true));
+                // if we don't have 2nd level retries, just get the message out of the way
+                if (!_simpleRetryStrategySettings.SecondLevelRetriesEnabled)
+                {
+                    await
+                        MoveMessageToErrorQueue(messageId, transportMessage, transactionContext,
+                            GetErrorDescriptionFor(messageId), GetErrorDescriptionFor(messageId, brief: true));
 
-                _errorTracker.CleanUp(messageId);
+                    _errorTracker.CleanUp(messageId);
+                    return;
+                }
+
+                // change the identifier to track by to perform this 2nd level of delivery attempts
+                var secondLevelMessageId = messageId + "-2nd-level";
+
+                if (_errorTracker.HasFailedTooManyTimes(secondLevelMessageId))
+                {
+                    await
+                        MoveMessageToErrorQueue(messageId, transportMessage, transactionContext,
+                            GetErrorDescriptionFor(messageId), GetErrorDescriptionFor(messageId, brief: true));
+
+                    _errorTracker.CleanUp(messageId);
+                    _errorTracker.CleanUp(secondLevelMessageId);
+                    return;
+                }
+
+                context.Save(DispatchAsFailedMessageKey, true);
+
+                await DispatchWithTrackerIdentifier(next, secondLevelMessageId, transactionContext);
                 return;
             }
 
+            await DispatchWithTrackerIdentifier(next, messageId, transactionContext);
+        }
+
+        async Task DispatchWithTrackerIdentifier(Func<Task> next, string identifierToTrackMessageBy, ITransactionContext transactionContext)
+        {
             try
             {
                 await next();
+
+                await transactionContext.Commit();
             }
             catch (Exception exception)
             {
-                _errorTracker.RegisterError(messageId, exception);
+                _errorTracker.RegisterError(identifierToTrackMessageBy, exception);
 
                 transactionContext.Abort();
             }
