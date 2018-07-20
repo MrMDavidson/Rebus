@@ -1170,13 +1170,13 @@
 * Add contract test to verify correct behavior of saga persisters
 
 
-## 4.0.0-b19
+## 4.0.0
 
 * Hide some internal types that were never meant to be part of the API
 * Add correlation configuration API to make it easy to correlate headers of incoming messages with saga data
 * Change all logging to have named placeholders (Serilog style) instead of the semantically useless .NET placeholders (logging libraries that have no use for named placeholders can use `AbstractRebusLoggerFactory`'s `RenderString` method)
-* Add experimental expression-based pipeline invoker
-* Compile expression-based pipeline with [FastExpressionCompiler](https://github.com/dadhi/FastExpressionCompiler) - thanks [dadhi]
+* Add experimental expression-based pipeline invoker (not enabled by default)
+* Compile expression-based pipeline with [FastExpressionCompiler](https://github.com/dadhi/FastExpressionCompiler) (not enabled by default) - thanks [dadhi]
 * Add .NET Core support (~~~targeting netstandard 1.6~~~) in addition to the current .NET 4.5 target - thanks [mvandevy]
 * Move JSON serializer into core (still default, but now exposed so it can be customized)
 * Rename transaction scope to `RebusTransactionScope` and make it expose `CompleteAsync()` and `Complete()` methods for completing in an async/sync manner respectively
@@ -1191,13 +1191,55 @@
 * Add `DeferLocal` and make deferral work analogous to sending
 * Add ability to forcibly limit the length of the `rbs2-error-details` header to overcome limitations of the transport in cases where e.g. a long stack trace would make it impossible to forward a failed message to the error queue
 
----
+## 4.0.1
 
+* Fix exceptions thrown by default persistence implementations
+* Fix exception thrown by Injectionist if a resolver cannot be found
+
+## 4.1.0
+
+* Add optional in-process locking middleware for saga instances
+* Force initialization of the configuration system at startup to avoid risking that it is initialized in a Rebus handler (almost always triggered by Entity Framework, results in exceptions complaining that Rebus' transaction context contains unserializable things)
+* Add option to externally configure the bus used internally by saga fixture, allowing for customizing everything but logging, transport, and saga storage (could e.g. be serialization) - thanks [boyanio]
+
+## 4.2.0
+
+* Decompression enabled by default because there's no reason why it shouldn't be
+* Ability for default JSON serializer to deserialize based on the serialized type, enabling JSON objects devoid of .NET type information
+* Fix it so that the file system transport does not output errors when in one-way client mode - thanks [pheiberg]
+* Make Rebus buildable on OS X - thanks [bartul]
+* Add ability to fail fast (i.e. immediately move the message to the error queue) either by throwing `FailFastException` or by configuring a custom `IFailFastChecker` to execute arbitrary logic - thanks [boyanio]
+
+## 4.2.1
+
+* Re-publish 4.2.0 because the Rebus.dll generated in 4.2.0 had version 1.0.0 and not the correct version
+
+## 5.0.0-b14
+
+* Move entire `Rebus.Testing` namespace to its own NuGet package: `Rebus.TestHelpers` (named "TestHelpers" to avoid confusing it with Rebus' own test project, and just because it's more appropriate)
+* Ensure disposal of all `IDisposable` instances tracked by Injectionist in the event that an ´IInitializable´ fails during startup
+* Add option to omit type information from serialized JSON text, thus saving lots of space and making the serialized JSON more pure at the expense of .NET object serialization power
+* Provide `Defer` method on `IRoutingApi` allowing for easily deferring explicitly routed messages
+* Ability to "name the bus", allowing for using something more descriptive than the default "Rebus 1", "Rebus 2"S names
+* Change built-in console logging to use abbr. log lvls.
+* Deferred start capability - call `Create()` instead of `Start()`, and the returned `IBusStarter` can be used to start message processing when it is desired to do so
+* Make in-mem error tracking max age configurable (defaults to 10 minutes)
+* Update JSON.NET dep to 11.0.1
+* Introduce extensibility point `ITopicNameConvention` for defining how types are mapped to topics - thanks [heberop]
+* Factor 40 improvement of "simple assembly-qualified type name" lookup
+* Factor 2.5 improvement of type lookup in JSON serializer
+* Introduce interface for locking saga data based on correlation properties, enabling the use of distributed locks - thanks [torangel]
+* Fail fast when message cannot be delivered to any handlers, basically assuming that the situation will not correct itself anyway
+* Add appropriate constructors to `IdempotencyData` to accomodate certain stubborn serializers
+
+---
 
 [AndreaCuneo]: https://github.com/AndreaCuneo
 [arneeiri]: https://github.com/arneeiri
+[bartul]: https://github.com/bartul
 [bchavez]: https://github.com/bchavez
 [bjomi]: https://github.com/bjomi
+[boyanio]: https://github.com/boyanio
 [caspertdk]: https://github.com/caspertdk
 [dadhi]: https://github.com/dadhi
 [dev4ce]: https://github.com/dev4ce
@@ -1208,6 +1250,7 @@
 [gertjvr]: https://github.com/gertjvr
 [hagbarddenstore]: https://github.com/hagbarddenstore
 [Hangsolow]: https://github.com/Hangsolow
+[heberop]: https://github.com/heberop
 [jasperdk]: https://github.com/jasperdk
 [jeffreyabecker]: https://github.com/jeffreyabecker
 [joshua5822]: https://github.com/joshua5822
@@ -1228,6 +1271,7 @@
 [NKnusperer]: https://github.com/NKnusperer
 [oguzhaneren]: https://github.com/oguzhaneren
 [PeteProgrammer]: https://github.com/PeteProgrammer
+[pheiberg]: https://github.com/pheiberg
 [pruiz]: https://github.com/pruiz
 [puzsol]: https://github.com/puzsol
 [runes83]: https://github.com/runes83

@@ -1,6 +1,8 @@
 ﻿using System;
 #if NET45
 using System.Runtime.Serialization;
+#elif NETSTANDARD2_0
+using System.Runtime.Serialization;
 #endif
 
 namespace Rebus.Exceptions
@@ -10,10 +12,10 @@ namespace Rebus.Exceptions
     /// </summary>
 #if NET45
     [Serializable]
-    public class ConcurrencyException : Exception
-# elif NETSTANDARD1_3
-    public class ConcurrencyException : Exception
+#elif NETSTANDARD2_0
+    [Serializable]
 #endif
+    public class ConcurrencyException : Exception
     {
         /// <summary>
         /// Constructs the exception
@@ -32,6 +34,14 @@ namespace Rebus.Exceptions
         }
 
 #if NET45
+        /// <summary>
+        /// Constructs the exception
+        /// </summary>
+        public ConcurrencyException(SerializationInfo info, StreamingContext context)
+            : base(info, context)
+        {
+        }
+#elif NETSTANDARD2_0
         /// <summary>
         /// Constructs the exception
         /// </summary>

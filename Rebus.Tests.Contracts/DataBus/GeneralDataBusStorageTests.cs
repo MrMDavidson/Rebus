@@ -4,10 +4,10 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using FluentAssertions;
 using NUnit.Framework;
 using Rebus.Compression;
 using Rebus.DataBus;
+using Rebus.Extensions;
 using Rebus.Tests.Contracts.Extensions;
 using Rebus.Time;
 
@@ -46,7 +46,7 @@ namespace Rebus.Tests.Contracts.DataBus
 
             Assert.That(hadLastReadTime, Is.False, "Did not expect the {0} key to be set", MetadataKeys.ReadTime);
 
-            var justSomeTime = new DateTimeOffset(1.January(2016));
+            var justSomeTime = new DateTimeOffset(new DateTime(2016, 1, 1));
 
             RebusTimeMachine.FakeIt(justSomeTime);
 
@@ -103,7 +103,7 @@ namespace Rebus.Tests.Contracts.DataBus
         [Test]
         public async Task CanGetStandardMetada()
         {
-            var fakeTime = new DateTimeOffset(17.June(2016));
+            var fakeTime = new DateTimeOffset(new DateTime(2016, 6, 17));
             RebusTimeMachine.FakeIt(fakeTime);
 
             const string knownId = "known id";
@@ -120,13 +120,13 @@ namespace Rebus.Tests.Contracts.DataBus
             // special case: zipped data has different size (and is actually bigger in this case :))
             if (_storage is ZippingDataBusStorageDecorator)
             {
-                Assert.That(readMetadata[MetadataKeys.Length], Is.EqualTo("23"));
+                Assert.That(readMetadata.GetValue(MetadataKeys.Length), Is.EqualTo("23"));
             }
             else
             {
-                Assert.That(readMetadata[MetadataKeys.Length], Is.EqualTo("3"));
+                Assert.That(readMetadata.GetValue(MetadataKeys.Length), Is.EqualTo("3"));
             }
-            Assert.That(readMetadata[MetadataKeys.SaveTime], Is.EqualTo(fakeTime.ToString("O")));
+            Assert.That(readMetadata.GetValue(MetadataKeys.SaveTime), Is.EqualTo(fakeTime.ToString("O")));
         }
 
         [Test]

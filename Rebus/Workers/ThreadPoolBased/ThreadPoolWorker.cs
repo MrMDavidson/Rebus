@@ -8,12 +8,14 @@ using Rebus.Messages;
 using Rebus.Pipeline;
 using Rebus.Threading;
 using Rebus.Transport;
+// ReSharper disable PrivateFieldCanBeConvertedToLocalVariable
 
 namespace Rebus.Workers.ThreadPoolBased
 {
     class ThreadPoolWorker : IWorker
     {
         readonly CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
+        readonly ManualResetEvent _workerShutDown = new ManualResetEvent(false);
         readonly ITransport _transport;
         readonly IPipelineInvoker _pipelineInvoker;
         readonly ParallelOperationsManager _parallelOperationsManager;
@@ -64,6 +66,8 @@ namespace Rebus.Workers.ThreadPoolBased
             }
 
             _log.Debug("Worker {workerName} stopped", Name);
+
+            _workerShutDown.Set();
         }
 
         void TryReceiveNextMessage(CancellationToken token)
@@ -86,11 +90,14 @@ namespace Rebus.Workers.ThreadPoolBased
                 using (parallelOperation)
                 using (var context = new TransactionContext())
                 {
-                    var transportMessage = await ReceiveTransportMessage(token, context);
+                    var transportMessage = await ReceiveTransportMessage(token, context).ConfigureAwait(false);
 
                     if (transportMessage == null)
                     {
                         context.Dispose();
+
+                        // get out quickly if we're shutting down
+                        if (token.IsCancellationRequested) return;
 
                         // no need for another thread to rush in and discover that there is no message
                         //parallelOperation.Dispose();
@@ -101,14 +108,10 @@ namespace Rebus.Workers.ThreadPoolBased
 
                     _backoffStrategy.Reset();
 
-                    await ProcessMessage(context, transportMessage);
+                    await ProcessMessage(context, transportMessage).ConfigureAwait(false);
                 }
             }
-            catch (TaskCanceledException)
-            {
-                // it's fine - just a sign that we are shutting down
-            }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
                 // it's fine - just a sign that we are shutting down
             }
@@ -122,17 +125,12 @@ namespace Rebus.Workers.ThreadPoolBased
         {
             try
             {
-                return await _transport.Receive(context, token);
+                return await _transport.Receive(context, token).ConfigureAwait(false);
             }
-            catch (TaskCanceledException)
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
                 // it's fine - just a sign that we are shutting down
-                throw;
-            }
-            catch (OperationCanceledException)
-            {
-                // it's fine - just a sign that we are shutting down
-                throw;
+                return null;
             }
             catch (Exception exception)
             {
@@ -153,26 +151,22 @@ namespace Rebus.Workers.ThreadPoolBased
                 AmbientTransactionContext.SetCurrent(context);
 
                 var stepContext = new IncomingStepContext(transportMessage, context);
-                await _pipelineInvoker.Invoke(stepContext);
+                await _pipelineInvoker.Invoke(stepContext).ConfigureAwait(false);
 
                 try
                 {
-                    await context.Complete();
+                    await context.Complete().ConfigureAwait(false);
                 }
                 catch (Exception exception)
                 {
                     _log.Error(exception, "An error occurred when attempting to complete the transaction context");
                 }
             }
-#if NET45
-            catch (ThreadAbortException exception)
-#elif NETSTANDARD1_3
             catch (OperationCanceledException exception)
-#endif
             {
                 context.Abort();
 
-                _log.Error(exception, "Worker was killed while handling message {messageLabel}", transportMessage.GetMessageLabel());
+                _log.Error(exception, "Worker was aborted while handling message {messageLabel}", transportMessage.GetMessageLabel());
             }
             catch (Exception exception)
             {
@@ -186,22 +180,16 @@ namespace Rebus.Workers.ThreadPoolBased
             }
         }
 
-        public void Stop()
-        {
-            _cancellationTokenSource.Cancel();
-        }
+        public void Stop() => _cancellationTokenSource.Cancel();
 
         public void Dispose()
         {
             Stop();
-#if NET45
-            if (!_workerThread.Join(_options.WorkerShutdownTimeout))
+
+            if (!_workerShutDown.WaitOne(_options.WorkerShutdownTimeout))
             {
                 _log.Warn("The {workerName} worker did not shut down within {shutdownTimeoutSeconds} seconds!", _options.WorkerShutdownTimeout.TotalSeconds);
-
-                _workerThread.Abort();
             }
-#endif
         }
     }
 }

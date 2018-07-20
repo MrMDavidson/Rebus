@@ -123,10 +123,14 @@ namespace Rebus.Tests.Contracts.Transports
             var input1 = _factory.Create(input1QueueName);
             var input2 = _factory.Create(input2QueueName);
 
+            Console.WriteLine($"Sending message to {input2QueueName}");
+
             await WithContext(async context =>
             {
                 await input1.Send(input2QueueName, MessageWith("hej"), context);
             });
+
+            Console.WriteLine("Receiving message in tx context, which is rolled back");
 
             await WithContext(async context =>
             {
@@ -136,6 +140,8 @@ namespace Rebus.Tests.Contracts.Transports
                 Assert.That(stringBody, Is.EqualTo("hej"));
             }, completeTransaction: false);
 
+            Console.WriteLine("Receiving message in tx context, which is completed");
+
             await WithContext(async context =>
             {
                 var transportMessage = await input2.Receive(context, _cancellationToken);
@@ -143,6 +149,8 @@ namespace Rebus.Tests.Contracts.Transports
 
                 Assert.That(stringBody, Is.EqualTo("hej"));
             });
+
+            Console.WriteLine("Receiving message in tx context, expecting null this time");
 
             await WithContext(async context =>
             {
@@ -170,12 +178,16 @@ namespace Rebus.Tests.Contracts.Transports
 
             if (commitAndExpectTheMessagesToBeSent)
             {
-                Assert.That(allMessages.Count, Is.EqualTo(2));
-                Assert.That(allMessages.OrderBy(s => s), Is.EqualTo(new[] { "hej1", "hej2" }));
+                var receivedMessages = allMessages.OrderBy(s => s).ToArray();
+                
+                Assert.That(receivedMessages.Count, Is.EqualTo(2), "Two messages were sent, so we expected two messages to be received");
+                
+                Assert.That(receivedMessages, Is.EqualTo(new[] { "hej1", "hej2" }), 
+                    $@"Expected that the messages 'hej1' and 'hej2' would have been received, but instead we got this: {string.Join(", ", receivedMessages)}");
             }
             else
             {
-                Assert.That(allMessages.Count, Is.EqualTo(0));
+                Assert.That(allMessages.Count, Is.EqualTo(0), "The transaction was not completed, so we didn't expect any messages to have been sent");
             }
         }
 

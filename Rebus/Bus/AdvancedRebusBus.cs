@@ -45,16 +45,13 @@ namespace Rebus.Bus
         {
             readonly RebusBus _rebusBus;
 
-            public TransportMessageApi(RebusBus rebusBus)
-            {
-                _rebusBus = rebusBus;
-            }
+            public TransportMessageApi(RebusBus rebusBus) => _rebusBus = rebusBus ?? throw new ArgumentNullException(nameof(rebusBus));
 
             public async Task Forward(string destinationAddress, Dictionary<string, string> optionalAdditionalHeaders = null)
             {
                 var transportMessage = GetCloneOfCurrentTransportMessage(optionalAdditionalHeaders);
 
-                await _rebusBus.SendTransportMessage(destinationAddress, transportMessage);
+                await _rebusBus.SendTransportMessage(destinationAddress, transportMessage).ConfigureAwait(false);
             }
 
             public async Task Defer(TimeSpan delay, Dictionary<string, string> optionalAdditionalHeaders = null)
@@ -64,7 +61,7 @@ namespace Rebus.Bus
 
                 transportMessage.SetDeferHeaders(RebusTime.Now + delay, _rebusBus._transport.Address);
 
-                await _rebusBus.SendTransportMessage(timeoutManagerAddress, transportMessage);
+                await _rebusBus.SendTransportMessage(timeoutManagerAddress, transportMessage).ConfigureAwait(false);
             }
 
             TransportMessage GetCloneOfCurrentTransportMessage(Dictionary<string, string> optionalAdditionalHeaders)
@@ -174,6 +171,17 @@ namespace Rebus.Bus
                 var logicalMessage = CreateMessage(explicitlyRoutedMessage, Operation.Send, optionalHeaders);
 
                 return _rebusBus.InnerSend(new[] { destinationAddress }, logicalMessage);
+            }
+
+            public Task Defer(string destinationAddress, TimeSpan delay, object explicitlyRoutedMessage, Dictionary<string, string> optionalHeaders = null)
+            {
+                var logicalMessage = CreateMessage(explicitlyRoutedMessage, Operation.Defer, optionalHeaders);
+
+                logicalMessage.SetDeferHeaders(RebusTime.Now + delay, destinationAddress);
+
+                var timeoutManagerAddress = _rebusBus.GetTimeoutManagerAddress();
+
+                return _rebusBus.InnerSend(new[] { timeoutManagerAddress }, logicalMessage);
             }
 
             public Task SendRoutingSlip(Itinerary itinerary, object message, Dictionary<string, string> optionalHeaders = null)

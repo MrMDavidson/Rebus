@@ -42,16 +42,15 @@ namespace Rebus.Auditing.Messages
 
                 _auditingHelper.SetCommonHeaders(clone);
 
-                await _transport.Send(_auditingHelper.AuditQueue, clone, transactionContext);
+                await _transport.Send(_auditingHelper.AuditQueue, clone, transactionContext).ConfigureAwait(false);
             }
 
-            await next();
+            await next().ConfigureAwait(false);
         }
 
         static bool IsPublishedMessage(TransportMessage transportMessage)
         {
-            string intent;
-            return transportMessage.Headers.TryGetValue(Headers.Intent, out intent)
+            return transportMessage.Headers.TryGetValue(Headers.Intent, out var intent)
                    && intent == Headers.IntentOptions.PublishSubscribe;
         }
     }

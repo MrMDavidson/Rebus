@@ -51,9 +51,8 @@ If that is the case, message dispatch is skipped, but any messages stored as out
 
             foreach (var handlerInvoker in handlerInvokersForSagas)
             {
-                var sagaData = handlerInvoker.GetSagaData() as IIdempotentSagaData;
 
-                if (sagaData == null) continue;
+                if (!(handlerInvoker.GetSagaData() is IIdempotentSagaData sagaData)) continue;
 
                 var idempotencyData = sagaData.IdempotencyData
                                       ?? (sagaData.IdempotencyData = new IdempotencyData());
@@ -76,9 +75,9 @@ If that is the case, message dispatch is skipped, but any messages stored as out
                         {
                             foreach (var destinationAddress in messageToResend.DestinationAddresses)
                             {
-                                await
-                                    _transport.Send(destinationAddress, messageToResend.TransportMessage,
-                                        transactionContext);
+                                var transportMessage = messageToResend.TransportMessage;
+
+                                await _transport.Send(destinationAddress, transportMessage, transactionContext).ConfigureAwait(false);
                             }
                         }
                     }
@@ -95,7 +94,7 @@ If that is the case, message dispatch is skipped, but any messages stored as out
                 }
             }
 
-            await next();
+            await next().ConfigureAwait(false);
         }
     }
 }

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -36,6 +37,7 @@ namespace Rebus.Serialization.Json
 
         readonly JsonSerializerSettings _settings;
         readonly Encoding _encoding;
+        readonly string _encodingHeaderValue;
 
         public JsonSerializer()
             : this(DefaultSettings, DefaultEncoding)
@@ -56,6 +58,12 @@ namespace Rebus.Serialization.Json
         {
             _settings = jsonSerializerSettings;
             _encoding = encoding;
+
+#if NET45
+            _encodingHeaderValue = $"{JsonContentType};charset={_encoding.HeaderName}";
+#else
+            _encodingHeaderValue = $"{JsonContentType};charset={_encoding.WebName}";
+#endif
         }
 
         /// <summary>
@@ -66,11 +74,14 @@ namespace Rebus.Serialization.Json
             var jsonText = JsonConvert.SerializeObject(message.Body, _settings);
             var bytes = _encoding.GetBytes(jsonText);
             var headers = message.Headers.Clone();
-#if NET45
-            headers[Headers.ContentType] = $"{JsonContentType};charset={_encoding.HeaderName}";
-#elif NETSTANDARD1_3
-            headers[Headers.ContentType] = $"{JsonContentType};charset={_encoding.WebName}";
-#endif
+
+            headers[Headers.ContentType] = _encodingHeaderValue;
+
+            if (!headers.ContainsKey(Headers.Type))
+            {
+                headers[Headers.Type] = message.Body.GetType().GetSimpleAssemblyQualifiedName();
+            }
+
             return new TransportMessage(headers, bytes);
         }
 
@@ -81,7 +92,7 @@ namespace Rebus.Serialization.Json
         {
             var contentType = transportMessage.Headers.GetValue(Headers.ContentType);
 
-            if (contentType == JsonUtf8ContentType)
+            if (contentType.Equals(JsonUtf8ContentType, StringComparison.OrdinalIgnoreCase))
             {
                 return GetMessage(transportMessage, _encoding);
             }
@@ -92,13 +103,14 @@ namespace Rebus.Serialization.Json
                 return GetMessage(transportMessage, encoding);
             }
 
-            throw new FormatException($"Unknown content type: '{contentType}' - must be '{JsonUtf8ContentType}' for the JSON serialier to work");
+            throw new FormatException($"Unknown content type: '{contentType}' - must be '{JsonContentType}' (e.g. '{JsonUtf8ContentType}') for the JSON serialier to work");
         }
 
         Encoding GetEncoding(string contentType)
         {
-            var charset = contentType
-                .Split(';')
+            var parts = contentType.Split(';');
+
+            var charset = parts
                 .Select(token => token.Split('='))
                 .Where(tokens => tokens.Length == 2)
                 .FirstOrDefault(tokens => tokens[0] == "charset");
@@ -123,16 +135,35 @@ namespace Rebus.Serialization.Json
         Message GetMessage(TransportMessage transportMessage, Encoding bodyEncoding)
         {
             var bodyString = bodyEncoding.GetString(transportMessage.Body);
-            var bodyObject = Deserialize(bodyString);
+            var type = GetTypeOrNull(transportMessage);
+            var bodyObject = Deserialize(bodyString, type);
             var headers = transportMessage.Headers.Clone();
             return new Message(headers, bodyObject);
         }
 
-        object Deserialize(string bodyString)
+        static readonly ConcurrentDictionary<string, Type> TypeCache = new ConcurrentDictionary<string, Type>();
+
+        static Type GetTypeOrNull(TransportMessage transportMessage)
+        {
+            if (!transportMessage.Headers.TryGetValue(Headers.Type, out var typeName)) return null;
+
+            try
+            {
+                return TypeCache.GetOrAdd(typeName, Type.GetType);
+            }
+            catch (Exception exception)
+            {
+                throw new FormatException($"Could not get .NET type named '{typeName}'", exception);
+            }
+        }
+
+        object Deserialize(string bodyString, Type type)
         {
             try
             {
-                return JsonConvert.DeserializeObject(bodyString, _settings);
+                return type == null
+                    ? JsonConvert.DeserializeObject(bodyString, _settings)
+                    : JsonConvert.DeserializeObject(bodyString, type, _settings);
             }
             catch (Exception exception)
             {

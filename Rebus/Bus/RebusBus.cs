@@ -16,6 +16,7 @@ using Rebus.Pipeline.Send;
 using Rebus.Routing;
 using Rebus.Subscriptions;
 using Rebus.Time;
+using Rebus.Topic;
 using Rebus.Transport;
 using Rebus.Workers;
 // ReSharper disable ArgumentsStyleLiteral
@@ -29,10 +30,7 @@ namespace Rebus.Bus
     {
         static int _busIdCounter;
 
-        readonly int _busId = Interlocked.Increment(ref _busIdCounter);
-
         readonly List<IWorker> _workers = new List<IWorker>();
-
         readonly BusLifetimeEvents _busLifetimeEvents;
         readonly IDataBus _dataBus;
         readonly IWorkerFactory _workerFactory;
@@ -42,11 +40,13 @@ namespace Rebus.Bus
         readonly ISubscriptionStorage _subscriptionStorage;
         readonly Options _options;
         readonly ILog _log;
+        readonly string _busName;
+        readonly ITopicNameConvention _topicNameConvention;
 
         /// <summary>
         /// Constructs the bus.
         /// </summary>
-        public RebusBus(IWorkerFactory workerFactory, IRouter router, ITransport transport, IPipelineInvoker pipelineInvoker, ISubscriptionStorage subscriptionStorage, Options options, IRebusLoggerFactory rebusLoggerFactory, BusLifetimeEvents busLifetimeEvents, IDataBus dataBus)
+        public RebusBus(IWorkerFactory workerFactory, IRouter router, ITransport transport, IPipelineInvoker pipelineInvoker, ISubscriptionStorage subscriptionStorage, Options options, IRebusLoggerFactory rebusLoggerFactory, BusLifetimeEvents busLifetimeEvents, IDataBus dataBus, ITopicNameConvention topicNameConvention)
         {
             _workerFactory = workerFactory;
             _router = router;
@@ -57,6 +57,11 @@ namespace Rebus.Bus
             _busLifetimeEvents = busLifetimeEvents;
             _dataBus = dataBus;
             _log = rebusLoggerFactory.GetLogger<RebusBus>();
+            _topicNameConvention = topicNameConvention;
+            
+            var defaultBusName = $"Rebus {Interlocked.Increment(ref _busIdCounter)}";
+            
+            _busName = options.OptionalBusName ?? defaultBusName;
         }
 
         /// <summary>
@@ -64,15 +69,13 @@ namespace Rebus.Bus
         /// </summary>
         public void Start(int numberOfWorkers)
         {
-            _log.Info("Starting bus {busId}", _busId);
-
             _busLifetimeEvents.RaiseBusStarting();
 
             SetNumberOfWorkers(numberOfWorkers);
 
             _busLifetimeEvents.RaiseBusStarted();
 
-            _log.Info("Started");
+            _log.Info("Bus {busName} started", _busName);
         }
 
         /// <summary>
@@ -89,7 +92,7 @@ namespace Rebus.Bus
 
             var logicalMessage = CreateMessage(commandMessage, Operation.SendLocal, optionalHeaders);
 
-            await InnerSend(new[] { destinationAddress }, logicalMessage);
+            await InnerSend(new[] { destinationAddress }, logicalMessage).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -98,9 +101,10 @@ namespace Rebus.Bus
         public async Task Send(object commandMessage, Dictionary<string, string> optionalHeaders = null)
         {
             var logicalMessage = CreateMessage(commandMessage, Operation.Send, optionalHeaders);
-            var destinationAddress = await _router.GetDestinationAddress(logicalMessage);
 
-            await InnerSend(new[] { destinationAddress }, logicalMessage);
+            var destinationAddress = await _router.GetDestinationAddress(logicalMessage).ConfigureAwait(false);
+            
+            await InnerSend(new[] { destinationAddress }, logicalMessage).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -116,7 +120,7 @@ namespace Rebus.Bus
 
             var timeoutManagerAddress = GetTimeoutManagerAddress();
 
-            await InnerSend(new[] { timeoutManagerAddress }, logicalMessage);
+            await InnerSend(new[] { timeoutManagerAddress }, logicalMessage).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -127,13 +131,13 @@ namespace Rebus.Bus
         public async Task Defer(TimeSpan delay, object message, Dictionary<string, string> optionalHeaders = null)
         {
             var logicalMessage = CreateMessage(message, Operation.Defer, optionalHeaders);
-            var destinationAddress = await _router.GetDestinationAddress(logicalMessage);
+            var destinationAddress = await _router.GetDestinationAddress(logicalMessage).ConfigureAwait(false);
 
             logicalMessage.SetDeferHeaders(RebusTime.Now + delay, destinationAddress);
 
             var timeoutManagerAddress = GetTimeoutManagerAddress();
 
-            await InnerSend(new[] { timeoutManagerAddress }, logicalMessage);
+            await InnerSend(new[] { timeoutManagerAddress }, logicalMessage).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -158,7 +162,7 @@ namespace Rebus.Bus
 
             logicalMessage.Headers[Headers.InReplyTo] = transportMessage.GetMessageId();
 
-            await InnerSend(new[] { returnAddress }, logicalMessage);
+            await InnerSend(new[] { returnAddress }, logicalMessage).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -194,7 +198,7 @@ namespace Rebus.Bus
         /// </summary>
         public Task Subscribe(Type eventType)
         {
-            var topic = eventType.GetSimpleAssemblyQualifiedName();
+            var topic = _topicNameConvention.GetTopic(eventType);
 
             return InnerSubscribe(topic);
         }
@@ -212,7 +216,7 @@ namespace Rebus.Bus
         /// </summary>
         public Task Unsubscribe(Type eventType)
         {
-            var topic = eventType.GetSimpleAssemblyQualifiedName();
+            var topic = _topicNameConvention.GetTopic(eventType);
 
             return InnerUnsubscribe(topic);
         }
@@ -235,7 +239,7 @@ namespace Rebus.Bus
             if (eventMessage == null) throw new ArgumentNullException(nameof(eventMessage));
 
             var messageType = eventMessage.GetType();
-            var topic = messageType.GetSimpleAssemblyQualifiedName();
+            var topic = _topicNameConvention.GetTopic(messageType);
 
             return InnerPublish(topic, eventMessage, optionalHeaders);
         }
@@ -251,9 +255,10 @@ namespace Rebus.Bus
         async Task InnerPublish(string topic, object eventMessage, Dictionary<string, string> optionalHeaders = null)
         {
             var logicalMessage = CreateMessage(eventMessage, Operation.Publish, optionalHeaders);
-            var subscriberAddresses = await _subscriptionStorage.GetSubscriberAddresses(topic);
 
-            await InnerSend(subscriberAddresses, logicalMessage);
+            var subscriberAddresses = await _subscriptionStorage.GetSubscriberAddresses(topic).ConfigureAwait(false);
+
+            await InnerSend(subscriberAddresses, logicalMessage).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -271,11 +276,11 @@ namespace Rebus.Bus
 
             if (_subscriptionStorage.IsCentralized)
             {
-                await _subscriptionStorage.RegisterSubscriber(topic, subscriberAddress);
+                await _subscriptionStorage.RegisterSubscriber(topic, subscriberAddress).ConfigureAwait(false);
             }
             else
             {
-                var destinationAddress = await _router.GetOwnerAddress(topic);
+                var destinationAddress = await _router.GetOwnerAddress(topic).ConfigureAwait(false);
 
                 var logicalMessage = CreateMessage(new SubscribeRequest
                 {
@@ -283,7 +288,7 @@ namespace Rebus.Bus
                     SubscriberAddress = subscriberAddress,
                 }, Operation.Subscribe);
 
-                await InnerSend(new[] { destinationAddress }, logicalMessage);
+                await InnerSend(new[] { destinationAddress }, logicalMessage).ConfigureAwait(false);
             }
         }
 
@@ -302,7 +307,7 @@ namespace Rebus.Bus
 
             if (_subscriptionStorage.IsCentralized)
             {
-                await _subscriptionStorage.UnregisterSubscriber(topic, subscriberAddress);
+                await _subscriptionStorage.UnregisterSubscriber(topic, subscriberAddress).ConfigureAwait(false);
             }
             else
             {
@@ -314,7 +319,7 @@ namespace Rebus.Bus
                     SubscriberAddress = subscriberAddress,
                 }, Operation.Unsubscribe);
 
-                await InnerSend(new[] { destinationAddress }, logicalMessage);
+                await InnerSend(new[] { destinationAddress }, logicalMessage).ConfigureAwait(false);
             }
         }
 
@@ -400,14 +405,14 @@ namespace Rebus.Bus
 
             if (currentTransactionContext != null)
             {
-                await SendUsingTransactionContext(destinationAddresses, logicalMessage, currentTransactionContext);
+                await SendUsingTransactionContext(destinationAddresses, logicalMessage, currentTransactionContext).ConfigureAwait(false);
             }
             else
             {
                 using (var context = new TransactionContext())
                 {
-                    await SendUsingTransactionContext(destinationAddresses, logicalMessage, context);
-                    await context.Complete();
+                    await SendUsingTransactionContext(destinationAddresses, logicalMessage, context).ConfigureAwait(false);
+                    await context.Complete().ConfigureAwait(false);
                 }
             }
         }
@@ -416,7 +421,7 @@ namespace Rebus.Bus
         {
             var context = new OutgoingStepContext(logicalMessage, transactionContext, new DestinationAddresses(destinationAddresses));
 
-            await _pipelineInvoker.Invoke(context);
+            await _pipelineInvoker.Invoke(context).ConfigureAwait(false);
         }
 
         async Task SendTransportMessage(string destinationAddress, TransportMessage transportMessage)
@@ -427,17 +432,18 @@ namespace Rebus.Bus
             {
                 using (var context = new TransactionContext())
                 {
-                    await _transport.Send(destinationAddress, transportMessage, context);
-                    await context.Complete();
+                    await _transport.Send(destinationAddress, transportMessage, context).ConfigureAwait(false);
+                    await context.Complete().ConfigureAwait(false);
                 }
             }
             else
             {
-                await _transport.Send(destinationAddress, transportMessage, transactionContext);
+                await _transport.Send(destinationAddress, transportMessage, transactionContext).ConfigureAwait(false);
             }
         }
 
         bool _disposing;
+        bool _disposed;
 
         /// <summary>
         /// Stops all workers, allowing them to finish handling the current message (for up to 1 minute) before exiting
@@ -447,6 +453,7 @@ namespace Rebus.Bus
             // this Dispose may be called when the Disposed event is raised - therefore, we need
             // to guard against recursively entering this method
             if (_disposing) return;
+            if (_disposed) return;
 
             try
             {
@@ -469,8 +476,11 @@ namespace Rebus.Bus
             finally
             {
                 _disposing = false;
+                _disposed = true;
 
                 _busLifetimeEvents.RaiseBusDisposed();
+
+                _log.Info("Bus {busName} stopped", _busName);
             }
         }
 
@@ -531,7 +541,7 @@ namespace Rebus.Bus
         {
             lock (_workers)
             {
-                var workerName = $"Rebus {_busId} worker {_workers.Count + 1}";
+                var workerName = $"{_busName} worker {_workers.Count + 1}";
 
                 _log.Debug("Adding worker {workerName}", workerName);
 
@@ -595,10 +605,8 @@ namespace Rebus.Bus
 
         /// <summary>
         /// Gets a label for this bus instance - e.g. "RebusBus 2" if this is the 2nd instance created, ever, in the current process
+        /// (or the name used when configuring it, if the name has been customized)
         /// </summary>
-        public override string ToString()
-        {
-            return $"RebusBus {_busId}";
-        }
+        public override string ToString() => $"RebusBus {_busName}";
     }
 }

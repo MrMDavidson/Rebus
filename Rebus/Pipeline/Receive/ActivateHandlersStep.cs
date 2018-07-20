@@ -35,25 +35,24 @@ namespace Rebus.Pipeline.Receive
         {
             var transactionContext = context.Load<ITransactionContext>();
             var message = context.Load<Message>();
-            var messageId = message.Headers.GetValue(Headers.MessageId);
             var body = message.Body;
             var messageType = body.GetType();
             var methodToInvoke = _dispatchMethods
                 .GetOrAdd(messageType, type => GetDispatchMethod(messageType));
 
-            var handlerInvokers = await (Task<HandlerInvokers>)methodToInvoke.Invoke(this, new[] { messageId, body, transactionContext, message });
+            var handlerInvokers = await ((Task<HandlerInvokers>)methodToInvoke.Invoke(this, new[] { body, transactionContext, message })).ConfigureAwait(false);
 
             context.Save(handlerInvokers);
 
-            await next();
+            await next().ConfigureAwait(false);
         }
 
-        async Task<HandlerInvokers> GetHandlerInvokers<TMessage>(string messageId, TMessage message, ITransactionContext transactionContext, Message logicalMessage)
+        async Task<HandlerInvokers> GetHandlerInvokers<TMessage>(TMessage message, ITransactionContext transactionContext, Message logicalMessage)
         {
-            var handlers = await _handlerActivator.GetHandlers(message, transactionContext);
+            var handlers = await _handlerActivator.GetHandlers(message, transactionContext).ConfigureAwait(false);
 
             var listOfHandlerInvokers = handlers
-                .Select(handler => new HandlerInvoker<TMessage>(messageId, () => handler.Handle(message), handler, transactionContext))
+                .Select(handler => new HandlerInvoker<TMessage>(() => handler.Handle(message), handler, transactionContext))
                 .Cast<HandlerInvoker>()
                 .ToList();
 

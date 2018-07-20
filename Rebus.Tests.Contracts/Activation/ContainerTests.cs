@@ -8,8 +8,8 @@ using NUnit.Framework;
 using Rebus.Activation;
 using Rebus.Bus;
 using Rebus.Bus.Advanced;
-using Rebus.Config;
 using Rebus.Handlers;
+using Rebus.Retry.Simple;
 using Rebus.Tests.Contracts.Extensions;
 using Rebus.Transport;
 using Rebus.Transport.InMem;
@@ -17,7 +17,7 @@ using Rebus.Transport.InMem;
 
 namespace Rebus.Tests.Contracts.Activation
 {
-    public abstract class ContainerTests<TActivationContext> : FixtureBase 
+    public abstract class ContainerTests<TActivationContext> : FixtureBase
         where TActivationContext : IActivationContext, new()
     {
         TActivationContext _activationCtx;
@@ -61,19 +61,18 @@ namespace Rebus.Tests.Contracts.Activation
         public void MultipleRegistrationsException()
         {
             var handlerActivator = _activationCtx.CreateActivator();
-            var containerAdapter = handlerActivator as IContainerAdapter;
 
-            if (containerAdapter == null)
+            if (!(handlerActivator is IContainerAdapter containerAdapter))
             {
                 Console.WriteLine($"Skipping this test because {handlerActivator} is not an IContainerAdapter");
                 return;
             }
 
-            containerAdapter.SetBus(new Testing.FakeBus());
+            containerAdapter.SetBus(new FakeBus());
 
             var exception = Assert.Throws<InvalidOperationException>(() =>
             {
-                containerAdapter.SetBus(new Testing.FakeBus());
+                containerAdapter.SetBus(new FakeBus());
             }, "Expected that the second call to SetBus on the container adapter with another bus instance would throw an exception");
 
             Console.WriteLine(exception);
@@ -83,14 +82,14 @@ namespace Rebus.Tests.Contracts.Activation
         public void IntegrationTest()
         {
             var bus = _activationCtx.CreateBus(
-                handlers => handlers.Register<StaticHandler>(), 
+                handlers => handlers.Register<StaticHandler>(),
                 configure => configure.Transport(t => t.UseInMemoryTransport(new InMemNetwork(), "container-integration-test")));
 
             bus.SendLocal(new StaticHandlerMessage("hej med dig")).Wait();
 
             Thread.Sleep(2000);
 
-            Assert.That(StaticHandler.HandledMessages.Cast<StaticHandlerMessage>().Single().Text, 
+            Assert.That(StaticHandler.HandledMessages.Cast<StaticHandlerMessage>().Single().Text,
                 Is.EqualTo("hej med dig"),
                 "Expected that StaticHandler would have been invoked, setting the static text property to 'hej med dig'");
         }
@@ -205,12 +204,15 @@ namespace Rebus.Tests.Contracts.Activation
             IActivatedContainer container;
             var activator = contextForThisTest.CreateActivator(out container);
 
+            if (!(activator is IContainerAdapter))
+            {
+                Console.WriteLine($"The handler activator {activator} is not a container adapter (i.e. an implementation of IContainerAdapter)");
+                return;
+            }
+
             using (container)
             {
-                if (activator is IContainerAdapter)
-                {
-                    ((IContainerAdapter) activator).SetBus(fakeBus);
-                }
+                ((IContainerAdapter)activator).SetBus(fakeBus);
             }
 
             Assert.That(fakeBus.Disposed, Is.True, "The disposable bus instance was NOT disposed when the container was disposed");
@@ -293,6 +295,35 @@ namespace Rebus.Tests.Contracts.Activation
             }
 
             public Task Publish(object eventMessage, Dictionary<string, string> optionalHeaders = null)
+            {
+                throw new NotImplementedException();
+            }
+        }
+
+        [Test]
+        public async Task ResolvesHandlersPolymorphically_ConcreteCaseWithFailedMessage()
+        {
+            var handlerActivator = _activationCtx.CreateActivator(handlers => handlers.Register<SecondLevelDeliveryHandler>());
+
+            using (var scope = new RebusTransactionScope())
+            {
+                var headers = new Dictionary<string, string>();
+                var body = new FailedMessage();
+                var wrapper = new FailedMessageWrapper<FailedMessage>(headers, body, "bla bla", new Exception[0]);
+                var handlers = (await handlerActivator.GetHandlers(wrapper, scope.TransactionContext)).ToList();
+
+                const string message = @"Expected that a single SecondLevelDeliveryHandler instance would have been returned because it implements IHandleMessages<IFailed<FailedMessage>> and we resolved handlers for a FailedMessageWrapper<FailedMessage>";
+
+                Assert.That(handlers.Count, Is.EqualTo(1), message);
+                Assert.That(handlers[0], Is.TypeOf<SecondLevelDeliveryHandler>(), message);
+            }
+        }
+
+        class FailedMessage { }
+
+        class SecondLevelDeliveryHandler : IHandleMessages<IFailed<FailedMessage>>
+        {
+            public Task Handle(IFailed<FailedMessage> message)
             {
                 throw new NotImplementedException();
             }

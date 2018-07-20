@@ -9,7 +9,7 @@ namespace Rebus.Retry
     public interface IErrorTracker
     {
         /// <summary>
-        /// This method is called on each experienced failed delivery
+        /// This method is called on each experienced failed delivery. 
         /// </summary>
         void RegisterError(string messageId, Exception exception);
         
@@ -37,5 +37,10 @@ namespace Rebus.Retry
         /// Gets all caught exceptions for the message ID
         /// </summary>
         IEnumerable<Exception> GetExceptions(string messageId);
+
+        /// <summary>
+        /// Marks the given <paramref name="messageId"/> as "FINAL", meaning that it should be considered as "having failed too many times now"
+        /// </summary>
+        void MarkAsFinal(string messageId);
     }
 }

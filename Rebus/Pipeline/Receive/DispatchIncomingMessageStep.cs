@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 using Rebus.Bus;
 using Rebus.Exceptions;
 using Rebus.Logging;
-using Rebus.Messages;
+// ReSharper disable ForCanBeConvertedToForeach
 
 namespace Rebus.Pipeline.Receive
 {
@@ -43,28 +43,33 @@ If no invokers were found, a RebusApplicationException is thrown.")]
         {
             var invokers = context.Load<HandlerInvokers>();
             var handlersInvoked = 0;
-            var messageLabel = invokers.Message.GetMessageLabel();
+            var message = invokers.Message;
+
+            var messageId = message.GetMessageId();
+            var messageType = message.GetMessageType();
 
             // if dispatch has already been aborted (e.g. in a transport message filter or something else that
             // was run before us....) bail out here:
             if (context.Load<bool>(AbortDispatchContextKey))
             {
-                _log.Debug("Skipping dispatch of message {messageLabel}", messageLabel);
-                await next();
+                _log.Debug("Skipping dispatch of message {messageType} {messageId}", messageType, messageId);
+                await next().ConfigureAwait(false);
                 return;
             }
 
             var stopwatch = Stopwatch.StartNew();
 
-            foreach (var invoker in invokers)
+            for(var index = 0; index < invokers.Count; index++)
             {
-                await invoker.Invoke();
+                var invoker = invokers[index];
+
+                await invoker.Invoke().ConfigureAwait(false);
                 handlersInvoked++;
 
                 // if dispatch was aborted at this point, bail out
                 if (context.Load<bool>(AbortDispatchContextKey))
                 {
-                    _log.Debug("Skipping further dispatch of message {messageLabel}", messageLabel);
+                    _log.Debug("Skipping further dispatch of message {messageType} {messageId}", messageType, messageId);
                     break;
                 }
             }
@@ -72,20 +77,15 @@ If no invokers were found, a RebusApplicationException is thrown.")]
             // throw error if we should have executed a handler but we didn't
             if (handlersInvoked == 0)
             {
-                var message = context.Load<Message>();
-                
-                var messageId = message.GetMessageId();
-                var messageType = message.GetMessageType();
+                var text = $"Message with ID {messageId} and type {messageType} could not be dispatched to any handlers (and will not be retried under the default fail-fast settings)";
 
-                var text = $"Message with ID {messageId} and type {messageType} could not be dispatched to any handlers";
-
-                throw new RebusApplicationException(text);
+                throw new MessageCouldNotBeDispatchedToAnyHandlersException(text);
             }
 
-            _log.Debug("Dispatching message {messageLabel} to {count} handlers took {elapsedMs:0} ms", 
-                messageLabel, handlersInvoked, stopwatch.Elapsed.TotalMilliseconds);
+            _log.Debug("Dispatching {messageType} {messageId} to {count} handlers took {elapsedMs:0} ms", 
+                messageType, messageId, handlersInvoked, stopwatch.ElapsedMilliseconds);
 
-            await next();
+            await next().ConfigureAwait(false);
         }
     }
 }
